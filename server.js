@@ -13,6 +13,16 @@ app.use(cors('*'));
 
 initializeDatabase(); // Initialize database
 
+// Middleware to validate UUID
+const validateUUID = (req, res, next) => {
+  const { user_id } = req.params;
+  if (user_id && !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
+    return res.status(400).json({ message: "Invalid user_id format." });
+  }
+  next();
+};
+
+
 // CRUD for Menu Items
 // Create
 app.post("/menu-items", async (req, res) => {
@@ -104,7 +114,12 @@ app.post('/signup', async (req, res) => {
 
 app.get('/profile/:user_id', async (req, res) => {
   const { user_id } = req.params;
+  console.log('Received user_id:', user_id);
   try {
+    if (!/^[0-9a-fA-F-]{36}$/.test(user_id)) {
+      return res.status(400).json({ message: 'Invalid user_id format.' });
+    }
+
     const result = await pool.query(
       'SELECT name, email, preferences FROM users WHERE user_id = $1',
       [user_id]
