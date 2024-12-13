@@ -136,10 +136,15 @@ app.get('/profile/:user_id', async (req, res) => {
 app.put('/profile/:user_id', async (req, res) => {
   const { user_id } = req.params;
   const { name, email, preferences } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ message: 'Name and email are required.' });
+  }
+
   try {
     const result = await pool.query(
       'UPDATE users SET name = $1, email = $2, preferences = $3 WHERE user_id = $4 RETURNING name, email, preferences',
-      [name, email, preferences, user_id]
+      [name, email, preferences || null, user_id]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
