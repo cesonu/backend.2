@@ -9,7 +9,7 @@ const bcrypt = require('bcrypt'); // Ensure bcrypt is imported
 const app = express();
 app.use(bodyParser.json());
 app.use(express.json()); // Middleware for parsing JSON requests
-app.use(cors());
+app.use(cors('*'));
 
 initializeDatabase(); // Initialize database
 
