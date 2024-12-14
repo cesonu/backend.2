@@ -286,12 +286,12 @@ app.post("/orders", async (req, res) => {
   try {
     // Create an order
     const orderResult = await pool.query(
-      "INSERT INTO orders (order_id, user_id, total_price) VALUES (gen_random_uuid(), $1, $2) RETURNING order_id",
-      [user_id, total_price]
+      "INSERT INTO orders (order_id, user_id, total_price, order_status) VALUES (gen_random_uuid(), $1, $2, $3) RETURNING order_id",
+      [user_id, total_price, 'Preparing']
     );
     const orderId = orderResult.rows[0].order_id;
 
-    // Insert all order items
+    // Insert order items
     const orderItemsQuery = `
       INSERT INTO order_items (order_id, food_id, quantity, price)
       VALUES ($1, $2, $3, $4)
@@ -305,6 +305,12 @@ app.post("/orders", async (req, res) => {
       ]);
     }
 
+    // Add loyalty points
+    const pointsToAdd = Math.floor(total_price); // 1 point per $1
+    await pool.query(
+      "UPDATE users SET loyalty_points = loyalty_points + $1 WHERE user_id = $2",
+      [pointsToAdd, user_id]
+    );
     // Clear the cart after placing the order
     await pool.query("DELETE FROM cart WHERE user_id = $1", [user_id]);
 
@@ -314,9 +320,113 @@ app.post("/orders", async (req, res) => {
   }
 });
 
+//endpooint to update order status
+app.put("/orders/:order_id/status", async (req, res) => {
+  const { order_id } = req.params;
+  const { status } = req.body;
+
+  try {
+    const result = await pool.query(
+      "UPDATE orders SET order_status = $1 WHERE order_id = $2 RETURNING *",
+      [status, order_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+//endpoint to fetch order status
+app.get("/orders/:order_id/status", async (req, res) => {
+  const { order_id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "SELECT order_status FROM orders WHERE order_id = $1",
+      [order_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+//add points after each order
+app.post("/orders", async (req, res) => {
+  const { user_id, total_price, items } = req.body;
+
+  try {
+    // Create an order
+    const orderResult = await pool.query(
+      "INSERT INTO orders (order_id, user_id, total_price, order_status) VALUES (gen_random_uuid(), $1, $2, $3) RETURNING order_id",
+      [user_id, total_price, 'Preparing']
+    );
+    const orderId = orderResult.rows[0].order_id;
+
+    // Insert order items
+    const orderItemsQuery = `
+      INSERT INTO order_items (order_id, food_id, quantity, price)
+      VALUES ($1, $2, $3, $4)
+    `;
+    for (const item of items) {
+      await pool.query(orderItemsQuery, [
+        orderId,
+        item.food_id,
+        item.quantity,
+        item.price,
+      ]);
+    }
+
+    // Add loyalty points
+    const pointsToAdd = Math.floor(total_price); // 1 point per $1
+    await pool.query(
+      "UPDATE users SET loyalty_points = loyalty_points + $1 WHERE user_id = $2",
+      [pointsToAdd, user_id]
+    );
+
+    res.status(201).json({ message: "Order placed successfully", orderId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+//endpoint to redeem points
+app.post("/users/:user_id/redeem", async (req, res) => {
+  const { user_id } = req.params;
+  const { points } = req.body;
+
+  try {
+    const userResult = await pool.query("SELECT loyalty_points FROM users WHERE user_id = $1", [user_id]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const currentPoints = userResult.rows[0].loyalty_points;
+    if (currentPoints < points) {
+      return res.status(400).json({ message: "Insufficient loyalty points." });
+    }
+
+    // Deduct points
+    await pool.query(
+      "UPDATE users SET loyalty_points = loyalty_points - $1 WHERE user_id = $2",
+      [points, user_id]
+    );
+
+    res.status(200).json({ message: "Points redeemed successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Start the server
 const PORT = 4000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
