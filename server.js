@@ -236,6 +236,85 @@ app.delete("/cart/:cart_id", async (req, res) => {
   }
 });
 
+// Fetch all menu items with customizations and nutritional info
+app.get("/menu-items", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM menu_item");
+    const menuItems = result.rows.map((item) => ({
+      ...item,
+      customizations: item.customizations ? JSON.parse(item.customizations) : [],
+      nutrition: item.nutrition ? JSON.parse(item.nutrition) : {}
+    }));
+    res.status(200).json(menuItems);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+app.post("/cart", async (req, res) => {
+  const { user_id, food_id, quantity, price } = req.body;
+
+  try {
+    const result = await pool.query(
+      "INSERT INTO cart (cart_id, user_id, food_id, quantity, price) VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING *",
+      [user_id, food_id, quantity, price]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/cart/:user_id", async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const result = await pool.query(
+      "SELECT c.cart_id, c.quantity, c.price, m.name, m.image_url FROM cart c JOIN menu_item m ON c.food_id = m.food_id WHERE c.user_id = $1",
+      [user_id]
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/orders", async (req, res) => {
+  const { user_id, total_price, items } = req.body;
+
+  try {
+    // Create an order
+    const orderResult = await pool.query(
+      "INSERT INTO orders (order_id, user_id, total_price) VALUES (gen_random_uuid(), $1, $2) RETURNING order_id",
+      [user_id, total_price]
+    );
+    const orderId = orderResult.rows[0].order_id;
+
+    // Insert all order items
+    const orderItemsQuery = `
+      INSERT INTO order_items (order_id, food_id, quantity, price)
+      VALUES ($1, $2, $3, $4)
+    `;
+    for (const item of items) {
+      await pool.query(orderItemsQuery, [
+        orderId,
+        item.food_id,
+        item.quantity,
+        item.price,
+      ]);
+    }
+
+    // Clear the cart after placing the order
+    await pool.query("DELETE FROM cart WHERE user_id = $1", [user_id]);
+
+    res.status(201).json({ message: "Order placed successfully", orderId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // Start the server
 const PORT = 4000;
 app.listen(PORT, () => {
