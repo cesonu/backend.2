@@ -66,7 +66,7 @@ app.put("/menu-item/:food_id", async (req, res) => {
   const { name, description, price, image_url,customizations, nutrition } = req.body;
   try {
     const result = await pool.query(
-      "UPDATE menu_item SET name = $1, description = $2, price = $3, image_url = $4,customizations = $4, nutrition = $5 WHERE food_id = $5 RETURNING *",
+      "UPDATE menu_item SET name = $1, description = $2, price = $3, image_url = $4,customizations = $5, nutrition = $6 WHERE food_id = $7 RETURNING *",
       [name, description, price, image_url, JSON.stringify(customizations), JSON.stringify(nutrition), food_id]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: "Menu item not found" });
