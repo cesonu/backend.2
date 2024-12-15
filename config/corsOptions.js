@@ -1,7 +1,7 @@
 const cors = require('cors');
 
 const corsOptions = {
-  origin: 'http://localhost:5173', // URL de votre frontend
+  origin: 'https://frontend-2y3c1rmeo-cesonus-projects.vercel.app', // URL de votre frontend
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 };
