@@ -2,14 +2,15 @@ const express = require("express");
 const { v4: uuidv4 } = require("uuid"); // For generating random IDs
 const pool = require("./config/db"); // Import PostgreSQL connection from config
 const bodyParser = require('body-parser');
-const cors = require("cors");
+const corsOptions = require("./config/corsOptions");
 const initializeDatabase = require("./config/db_init"); // Import the initialization function
 const bcrypt = require('bcrypt'); // Ensure bcrypt is imported
 
 const app = express();
 app.use(bodyParser.json());
 app.use(express.json()); // Middleware for parsing JSON requests
-app.use(cors('*'));
+app.use(corsOptions)
+app.use('/uploads', express.static('public/uploads'));
 
 initializeDatabase(); // Initialize database
 
@@ -22,18 +23,184 @@ const validateUUID = (req, res, next) => {
   next();
 };
 
+// CRUD for Categories
+// Create a new category
+app.post("/categories", async (req, res) => {
+  const { name, image_url } = req.body;
+  
+  if (!name) {
+    return res.status(400).json({ message: "Category name is required" });
+  }
 
-// CRUD for Menu Items
-// Create
-app.post("/menu-items", async (req, res) => {
-  const { name, description, price, image_url } = req.body;
   try {
     const result = await pool.query(
-      "INSERT INTO menu_item (food_id, name, description, price, image_url) VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING *",
-      [name, description, price, image_url]
+      "INSERT INTO categories (category_id, name, image_url) VALUES (gen_random_uuid(), $1, $2) RETURNING *",
+      [name, image_url]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ message: "Category already exists" });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Read all categories
+app.get("/categories", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM categories");
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Read a specific category by ID
+app.get("/categories/:category_id", async (req, res) => {
+  const { category_id } = req.params;
+  
+  try {
+    const result = await pool.query(
+      "SELECT * FROM categories WHERE category_id = $1",
+      [category_id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+    
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a category
+app.put("/categories/:category_id", async (req, res) => {
+  const { category_id } = req.params;
+  const { name, image_url } = req.body;
+  
+  if (!name && !image_url) {
+    return res.status(400).json({ message: "At least one field to update is required" });
+  }
+
+  try {
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (name) {
+      updateFields.push(`name = $${paramCount}`);
+      values.push(name);
+      paramCount++;
+    }
+
+    if (image_url) {
+      updateFields.push(`image_url = $${paramCount}`);
+      values.push(image_url);
+      paramCount++;
+    }
+
+    values.push(category_id);
+
+    const result = await pool.query(
+      `UPDATE categories SET ${updateFields.join(', ')} WHERE category_id = $${paramCount} RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ message: "Category name must be unique" });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a category
+app.delete("/categories/:category_id", async (req, res) => {
+  const { category_id } = req.params;
+
+  try {
+    // First, check if the category is used in any menu items
+    const menuItemCheck = await pool.query(
+      "SELECT COUNT(*) FROM menu_item WHERE category_id = $1",
+      [category_id]
+    );
+
+    if (parseInt(menuItemCheck.rows[0].count) > 0) {
+      return res.status(400).json({ 
+        message: "Cannot delete category with associated menu items" 
+      });
+    }
+
+    const result = await pool.query(
+      "DELETE FROM categories WHERE category_id = $1 RETURNING *",
+      [category_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    res.status(200).json({ 
+      message: "Category deleted successfully", 
+      category: result.rows[0] 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// CRUD for Menu Items
+// Create a new menu item
+app.post("/menu-items", async (req, res) => {
+  const { 
+    name, 
+    price, 
+    image_url, 
+    category_id, 
+    customizations, 
+    nutrition 
+  } = req.body;
+  
+  if (!name || !price || !category_id) {
+    return res.status(400).json({ message: "Name, price, and category are required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO menu_item (
+        food_id, 
+        name, 
+        price, 
+        image_url, 
+        category_id, 
+        customizations, 
+        nutrition
+      ) VALUES (
+        gen_random_uuid(), 
+        $1, $2, $3, $4, $5, $6
+      ) RETURNING *`,
+      [
+        name, 
+        price, 
+        image_url, 
+        category_id, 
+        customizations || null, 
+        nutrition || null
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(400).json({ message: "Invalid category" });
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -41,48 +208,171 @@ app.post("/menu-items", async (req, res) => {
 // Read all menu items
 app.get("/menu-items", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM menu_item");
+    const result = await pool.query(`
+      SELECT 
+        mi.*,
+        c.name AS category_name
+      FROM 
+        menu_item mi
+      JOIN 
+        categories c ON mi.category_id = c.category_id
+    `);
     res.status(200).json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Read menu item by food_id
-app.get("/menu-items/:food_id", async (req, res) => {
-  const { food_id } = req.params;
-  try {
-    const result = await pool.query("SELECT * FROM menu_item WHERE food_id = $1", [food_id]);
-    if (result.rows.length === 0) return res.status(404).json({ message: "Menu item not found" });
-    res.status(200).json(result.rows[0]);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Update menu item by food_id
-app.put("/menu-item/:food_id", async (req, res) => {
-  const { food_id } = req.params;
-  const { name, description, price, image_url,customizations, nutrition } = req.body;
+// Read menu items by category
+app.get("/menu-items/category/:category_id", async (req, res) => {
+  const { category_id } = req.params;
+  
   try {
     const result = await pool.query(
-      "UPDATE menu_item SET name = $1, description = $2, price = $3, image_url = $4,customizations = $5, nutrition = $6 WHERE food_id = $7 RETURNING *",
-      [name, description, price, image_url, JSON.stringify(customizations), JSON.stringify(nutrition), food_id]
+      `SELECT 
+        mi.*, 
+        c.name AS category_name, 
+        c.image_url AS category_image
+      FROM menu_item mi
+      JOIN categories c ON mi.category_id = c.category_id
+      WHERE mi.category_id = $1`,
+      [category_id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Menu item not found" });
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "No items found in this category" });
+    }
+    
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Read a specific menu item by ID
+app.get("/menu-items/:food_id", async (req, res) => {
+  const { food_id } = req.params;
+  
+  try {
+    const result = await pool.query(
+      `SELECT 
+        mi.*, 
+        c.name AS category_name, 
+        c.image_url AS category_image
+      FROM menu_item mi
+      JOIN categories c ON mi.category_id = c.category_id
+      WHERE mi.food_id = $1`,
+      [food_id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Menu item not found" });
+    }
+    
     res.status(200).json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Delete menu item by food_id
+// Update a menu item
+app.put("/menu-items/:food_id", async (req, res) => {
+  const { food_id } = req.params;
+  const { 
+    name, 
+    price, 
+    image_url, 
+    category_id, 
+    customizations, 
+    nutrition 
+  } = req.body;
+  
+  if (!name && !price && !image_url && !category_id && !customizations && !nutrition) {
+    return res.status(400).json({ message: "At least one field to update is required" });
+  }
+
+  try {
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (name) {
+      updateFields.push(`name = $${paramCount}`);
+      values.push(name);
+      paramCount++;
+    }
+
+    if (price) {
+      updateFields.push(`price = $${paramCount}`);
+      values.push(price);
+      paramCount++;
+    }
+
+    if (image_url) {
+      updateFields.push(`image_url = $${paramCount}`);
+      values.push(image_url);
+      paramCount++;
+    }
+
+    if (category_id) {
+      updateFields.push(`category_id = $${paramCount}`);
+      values.push(category_id);
+      paramCount++;
+    }
+
+    if (customizations) {
+      updateFields.push(`customizations = $${paramCount}`);
+      values.push(customizations);
+      paramCount++;
+    }
+
+    if (nutrition) {
+      updateFields.push(`nutrition = $${paramCount}`);
+      values.push(nutrition);
+      paramCount++;
+    }
+
+    values.push(food_id);
+
+    const result = await pool.query(
+      `UPDATE menu_item 
+       SET ${updateFields.join(', ')} 
+       WHERE food_id = $${paramCount} 
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Menu item not found" });
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(400).json({ message: "Invalid category" });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a menu item
 app.delete("/menu-items/:food_id", async (req, res) => {
   const { food_id } = req.params;
+
   try {
-    const result = await pool.query("DELETE FROM menu_item WHERE food_id = $1 RETURNING *", [food_id]);
-    if (result.rows.length === 0) return res.status(404).json({ message: "Menu item not found" });
-    res.status(200).json({ message: "Menu item deleted successfully" });
+    const result = await pool.query(
+      "DELETE FROM menu_item WHERE food_id = $1 RETURNING *",
+      [food_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Menu item not found" });
+    }
+
+    res.status(200).json({ 
+      message: "Menu item deleted successfully", 
+      menu_item: result.rows[0] 
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -155,7 +445,6 @@ app.put('/profile/:user_id', async (req, res) => {
   }
 });
 
-
 // Login Route
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -176,7 +465,16 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    res.status(200).json({ message: 'Login successful.', user: { user_id: user.user_id, name: user.name, email: user.email } });
+    // Explicitly return user_id
+    res.status(200).json({ 
+      message: 'Login successful.', 
+      user_id: user.user_id,  // Add this line
+      user: { 
+        user_id: user.user_id, 
+        name: user.name, 
+        email: user.email 
+      } 
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -197,11 +495,22 @@ app.post("/cart", async (req, res) => {
   }
 });
 
-// Read cart by user_id
+// Read cart by user_id with menu item details
 app.get("/cart/:user_id", async (req, res) => {
   const { user_id } = req.params;
   try {
-    const result = await pool.query("SELECT * FROM cart WHERE user_id = $1", [user_id]);
+    const result = await pool.query(`
+      SELECT 
+        c.cart_id, 
+        c.quantity, 
+        c.price, 
+        m.name, 
+        m.image_url, 
+        m.food_id
+      FROM cart c 
+      JOIN menu_item m ON c.food_id = m.food_id 
+      WHERE c.user_id = $1
+    `, [user_id]);
     res.status(200).json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
